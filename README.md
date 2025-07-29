@@ -1,5 +1,7 @@
-
-示例项目：加法器
+### BF16MAC
+以UCB开源运算器hardfloat为基础，为BF16格式运算定制修改，期望实现
+1. 支持混合精度计算
+2. 保证混合精度计算时运算数据位宽无冗余，用尽可能小位宽的运算器
 
 ### 环境使用的版本：
 ```
@@ -26,4 +28,4 @@ sbt "testOnly demo.MyAdderTester"
 sbt "runMain demo.GenerateVerilog"
 ```
 
-默认生成在 `generated` 文件夹。
+默认生成在 `generated` 文件夹
