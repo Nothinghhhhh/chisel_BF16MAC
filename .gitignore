@@ -1,0 +1,13 @@
+target/
+project/target/
+generated/
+test_run_dir/
+.bsp/
+.bloop/
+.metals/
+project/.bloop/
+project/metals.sbt
+project/project/
+.ivy2
+.sbt
+.vscode/
