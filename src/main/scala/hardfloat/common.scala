@@ -76,6 +76,16 @@ class RawFloat(val expWidth: Int, val sigWidth: Int) extends Bundle
 
 }
 
+class RawBF16(val expWidth: Int, val sigWidth: Int) extends Bundle
+{
+    val isNaN: Bool = Bool()              // overrides all other fields
+    val isInf: Bool = Bool()              // overrides 'isZero', 'sExp', and 'sig'
+    val isZero: Bool = Bool()              // overrides 'sExp' and 'sig'
+    val sign: Bool = Bool()
+    val sExp: UInt = UInt((expWidth + 1).W)
+    val sig: UInt = UInt((sigWidth + 1).W)   // 2 m.s. bits cannot both be 0
+
+}
 //*** CHANGE THIS INTO A '.isSigNaN' METHOD OF THE 'RawFloat' CLASS:
 object isSigNaNRawFloat
 {

@@ -1,0 +1,169 @@
+package hardfloat
+
+import chisel3._
+import chisel3.util._
+import consts._
+
+class MulAddRecFN_interIo(expWidth: Int, sigWidth: Int) extends Bundle
+{
+//*** 编码这些情况是否可以使用更少的位数？:
+    val isSigNaNAny     = Bool()  // 任何输入是否为信号NaN（sNaN）
+    val isNaNAOrB       = Bool()  // 输入A或B是否为NaN
+    val isInfMul        = Bool()  // 乘积是否为无穷大
+    val isZeroMul       = Bool()  // 乘积是否为零
+    val isInvalidMul    = Bool()  // 乘积是否为无效操作
+    val signProd        = Bool()  // 乘积的符号
+    val isNaNC          = Bool()  // 输入C是否为NaN
+    val isInfC          = Bool()  // 输入C是否为无穷大
+    val isZeroC         = Bool()  // 输入C是否为零
+    val doSubMags       = Bool()  // 是否执行减法运算（乘积与C符号不同）
+    val sExpSum         = SInt((expWidth + 2).W)  // 有符号指数和
+    val CIsDominant     = Bool()  // C是否占主导地位（决定最终结果的主要因素）
+    val CDom_CAlignDist = UInt(log2Ceil(sigWidth + 1).W)  // C占主导时的对齐距离
+    val highAlignedSigC = UInt((sigWidth + 2).W)  // 对齐后的C的高位部分
+    val bit0AlignedSigC = UInt(1.W)  // 对齐后的C的最低位
+}
+
+class BF16ToRawBF16(expWidth: Int, sigWidth: Int) extends RawModule {
+    val io = IO(new Bundle {
+        val in = Input(Bits((expWidth + sigWidth).W))
+        val out = Output(new RawBF16(expWidth, sigWidth))
+    })
+
+    val sign = io.in(expWidth + sigWidth - 1)
+    val expIn = io.in(expWidth + sigWidth - 2, expWidth + sigWidth - 9)
+    val fractIn = io.in(expWidth + sigWidth - 10, 0)
+
+    val isZeroExpIn = (expIn === 0.U)
+    val isZeroFractIn = fractIn === 0.U
+
+    val isZero = isZeroExpIn && isZeroFractIn
+    val isDenormal = isZeroExpIn && !isZeroFractIn
+    val isSpecial = expIn === 255.U
+
+    io.out.isNaN := isSpecial && !isZeroFractIn
+    io.out.isInf := isSpecial && isZeroFractIn
+    io.out.isZero := isZero         
+    io.out.sign := sign
+
+    io.out.sExp := 0.U(1.W) ## Mux(isDenormal, 0.U(expWidth.W), expIn)
+    io.out.sig := 0.U(1.W) ## !isZero ## Mux(isZeroExpIn, 0.U((sigWidth - 1).W), fractIn)
+}
+
+class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
+{
+    val io = IO(new Bundle {
+        val a = Input(Bits((16).W))
+        val b = Input(Bits((16).W))
+        val c = Input(Bits((expWidth + sigWidth).W))
+        val mulAddA = Output(UInt(8.W))  // 传递给乘法器的A的尾数
+        val mulAddB = Output(UInt(8.W))  // 传递给乘法器的B的尾数
+        val mulAddC = Output(UInt((sigWidth * 2).W))  // 对齐后的C，用于与乘积相加
+        val toPostMul = Output(new MulAddRecFN_interIo(expWidth, sigWidth))  // 传递给后处理阶段的信息、
+        
+        //val preDebug = Output(UInt(16.W))
+    })
+
+    // 还没看懂
+    val sigSumWidth = sigWidth + 16 + 3  // 信号和的总位宽
+
+    // >>> 格式转换
+    val rawA_module = Module(new BF16ToRawBF16(8, 8))
+    rawA_module.io.in := io.a
+    val rawA = rawA_module.io.out
+
+    val rawB_module = Module(new BF16ToRawBF16(8, 8))
+    rawB_module.io.in := io.b
+    val rawB = rawB_module.io.out
+
+    val rawC_module = Module(new BF16ToRawBF16(8, 8))
+    rawC_module.io.in := io.c
+    val rawC = rawC_module.io.out
+    // <<< 格式转换
+    
+    // >>> 特殊情况判断
+    val isZeroMul = rawA.isZero || rawB.isZero
+    val isInvalidMul = (rawA.isNaN && rawB.isZero) || (rawA.isZero && rawB.isNaN) || (rawA.isInf && rawB.isZero) || (rawA.isZero && rawB.isInf)
+    val isInfMul = rawA.isInf || rawB.isInf
+
+    val signProd = rawA.sign ^ rawB.sign
+
+    val doSubMags = signProd ^ rawC.sign 
+    // <<< 特殊情况判断
+
+    // >>> 对齐
+    
+
+    // <<< 对齐
+    // 计算乘积的对齐指数（考虑偏置和额外的保护位）
+    val sExpAlignedProd =
+        rawA.sExp +& rawB.sExp + (-(BigInt(1)<<expWidth) + sigWidth + 3).S
+
+    //------------------------------------------------------------------------
+    // 计算C的对齐距离和对齐后的值
+    //------------------------------------------------------------------------
+    val sNatCAlignDist = sExpAlignedProd - rawC.sExp  // C相对于乘积的自然对齐距离，有符号
+    val posNatCAlignDist = sNatCAlignDist(expWidth + 1, 0)  // 去掉符号位
+    val isMinCAlign = isZeroMul || (sNatCAlignDist < 0.S)  // A*B为0或C的指数大，c不移位
+    // C不为0,且c不需要移位或移位距离小于sigWidth，C主导
+    val CIsDominant =
+        ! rawC.isZero && (isMinCAlign || (posNatCAlignDist <= sigWidth.U))
+    // 实际的对齐距离
+    
+    val CAlignDist =
+        Mux(isMinCAlign,
+            0.U,  // 不移位，或按照实际距离移位（不超过总位宽-1）
+            Mux(posNatCAlignDist < (sigSumWidth - 1).U,
+                posNatCAlignDist(log2Ceil(sigSumWidth) - 1, 0),  // 使用计算的距离
+                (sigSumWidth - 1).U  // 限制最大移位距离
+            )
+        )
+    // C的尾数处理：减法时取反，加法时保持原值，然后拼接填充位并右移对齐
+    val mainAlignedSigC =
+        (Mux(doSubMags, ~rawC.sig, rawC.sig) ## Fill(sigSumWidth - sigWidth + 2, doSubMags)).asSInt>>CAlignDist
+    // 计算移位丢失的位的OR归约（用于粘滞位计算）
+    val reduced4CExtra =
+        (orReduceBy4(rawC.sig<<((sigSumWidth - sigWidth - 1) & 3)) &
+             lowMask(
+                 CAlignDist>>2,
+//*** 不需要？:
+//                 (sigSumWidth + 2)>>2,
+                 (sigSumWidth - 1)>>2,
+                 (sigSumWidth - sigWidth - 1)>>2
+             )
+        ).orR
+    // 最终对齐的C（包含粘滞位）
+    val alignedSigC =
+        Cat(mainAlignedSigC>>3,
+            Mux(doSubMags,
+                mainAlignedSigC(2, 0).andR && ! reduced4CExtra,  // 减法时的粘滞位计算
+                mainAlignedSigC(2, 0).orR  ||   reduced4CExtra   // 加法时的粘滞位计算
+            )
+        )
+
+    io.mulAddA := rawA.sig
+    io.mulAddB := rawB.sig
+    io.mulAddC := alignedSigC(sigWidth * 2, 1)
+
+    // 传递给后处理阶段的信息
+    io.toPostMul.isSigNaNAny :=
+        isSigNaNRawFloat(rawA) || isSigNaNRawFloat(rawB) || isSigNaNRawFloat(rawC)  // 检查是否有sNaN
+    io.toPostMul.isNaNAOrB := rawA.isNaN || rawB.isNaN                              // A或B是否为NaN
+    io.toPostMul.isInfMul  := isInfMul                                              // 乘积是否为无穷大
+    io.toPostMul.isZeroMul := isZeroMul                                             // 乘积是否为零
+    io.toPostMul.isInvalidMul := isInvalidMul                                       // 乘积是否为无效操作
+    io.toPostMul.signProd  := signProd     // 乘积的符号
+    io.toPostMul.isNaNC    := rawC.isNaN   // C是否为NaN
+    io.toPostMul.isInfC    := rawC.isInf   // C是否为无穷大
+    io.toPostMul.isZeroC   := rawC.isZero  // C是否为零
+    io.toPostMul.doSubMags := doSubMags    // 是否执行减法运算
+    io.toPostMul.sExpSum   :=
+        Mux(CIsDominant, rawC.sExp, sExpAlignedProd - sigWidth.S)  // 结果的指数
+    io.toPostMul.CIsDominant := CIsDominant       // C是否占主导
+    io.toPostMul.CDom_CAlignDist := CAlignDist(log2Ceil(sigWidth + 1) - 1, 0)  // C主导时的对齐距离
+    io.toPostMul.highAlignedSigC :=
+        alignedSigC(sigSumWidth - 1, sigWidth * 2 + 1)  // 对齐C的高位部分
+    io.toPostMul.bit0AlignedSigC := alignedSigC(0)      // 对齐C的最低位
+
+    //io.preDebug := Cat(rawA.sig, rawB.sig, rawC.sig)
+}
