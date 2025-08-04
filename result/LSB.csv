@@ -1,0 +1,9 @@
+io_a=807f,  io_b=37d2,  io_c=7f,    dut_actual=7f,      rm_expected=7e      1111/1110
+io_a=7799,  io_b=68,    io_c=7f,    dut_actual=3879,    rm_expected=3878    1001/1000
+io_a=4b,    io_b=4074,  io_c=8080,  dut_actual=9e,      rm_expected=9d      1110/1101？
+io_a=4171,  io_b=8001,  io_c=80,    dut_actual=71,      rm_expected=70      0001/0000
+io_a=807f,  io_b=347e,  io_c=7f,    dut_actual=7f,      rm_expected=7e      1111/1110
+io_a=7b30,  io_b=807f,  io_c=0,     dut_actual=bc2f,    rm_expected=bc2e    1111/1110
+io_a=dc2c,  io_b=7f,    io_c=8001,  dut_actual=9d2b,    rm_expected=9d2a    1011/1010
+io_a=80,    io_b=7f7f,  io_c=cb9d,  dut_actual=cb9d,    rm_expected=cb9c    1101/1100
+io_a=ff7f,  io_b=8080,  io_c=3e2d,  dut_actual=4085,    rm_expected=4084    0101/0100
