@@ -109,12 +109,13 @@ class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
         val mulAddB = Output(UInt(8.W))  // 传递给乘法器的B的尾数
         val mulAddC = Output(UInt((sigWidth * 2).W))  // 对齐后的C，用于与乘积相加
         val toPostMul = Output(new MulAddRecFN_interIo(expWidth, sigWidth))  // 传递给后处理阶段的信息、
-        
-        //val preDebug = Output(UInt(16.W))
+    
+        //debug
+        val dbg_alignedSigC = Output(UInt((sigWidth + 20).W))
     })
 
-    // 还没看懂
-    val sigSumWidth = sigWidth + 16 + 3  // 信号和的总位宽
+    val sigSumWidth = sigWidth + 16 + 3  
+    // 信号和的总位宽，用于容纳整个计算过程的尾数，故指数对齐时需要考虑移位至sigSumWidth对应的实际位置
 
     // >>> 格式转换
     val rawA_module = Module(new BF16ToRawFloat())
@@ -141,23 +142,16 @@ class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
     val signProd = rawA.sign ^ rawB.sign
 
     val doSubMags = signProd ^ rawC.sign 
-
     // <<< 特殊情况判断
 
-    // 计算乘积的对齐指数（考虑偏置和额外的保护位）
-    val sExpAlignedProd =
-        rawA.sExp +& rawB.sExp + (-(BigInt(1)<<expWidth) + sigWidth + 3).S
-
-    //------------------------------------------------------------------------
-    // 计算C的对齐距离和对齐后的值
-    //------------------------------------------------------------------------
+    // >>> 对齐距离计算
+    val sExpAlignedProd = rawA.sExp +& rawB.sExp + (-(BigInt(1)<<expWidth) + sigWidth + 3).S 
+        // 偏置值为127+128+1恰为256，exp:a+b-c多出一个偏置需要去掉，并需要以sigSumWidth高位为基准
     val sNatCAlignDist = sExpAlignedProd - rawC.sExp  // C相对于乘积的自然对齐距离，有符号
     val posNatCAlignDist = sNatCAlignDist(expWidth + 1, 0)  // 去掉符号位
-    val isMinCAlign = isZeroMul || (sNatCAlignDist < 0.S)  // A*B为0或C的指数大，c不移位
-    // C不为0,且c不需要移位或移位距离小于sigWidth，C主导
-    val CIsDominant =
-        ! rawC.isZero && (isMinCAlign || (posNatCAlignDist <= sigWidth.U))
-    // 实际的对齐距离
+    val isMinCAlign = isZeroMul || sNatCAlignDist(expWidth + 1)  // A*B为0或C的指数大，c不移位（直接检查符号位）
+    val CIsDominant = !rawC.isZero && (isMinCAlign || (posNatCAlignDist <= sigWidth.U))  
+        // C不为0,且c不需要移位或移位距离小于sigWidth，C主导
     
     val CAlignDist =
         Mux(isMinCAlign,
@@ -167,9 +161,13 @@ class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
                 (sigSumWidth - 1).U  // 限制最大移位距离
             )
         )
-    // C的尾数处理：减法时取反，加法时保持原值，然后拼接填充位并右移对齐
+    // <<< 对齐距离计算
+    
+    // >>> C的尾数处理
     val mainAlignedSigC =
         (Mux(doSubMags, ~rawC.sig, rawC.sig) ## Fill(sigSumWidth - sigWidth + 2, doSubMags)).asSInt>>CAlignDist
+        // 减法时取反，加法时保持原值，然后拼接填充位以拓展至sigSumWidth，并右移对齐
+        
     // 计算移位丢失的位的OR归约（用于粘滞位计算）
     val reduced4CExtra =
         (orReduceBy4(rawC.sig<<((sigSumWidth - sigWidth - 1) & 3)) &
@@ -189,7 +187,8 @@ class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
                 mainAlignedSigC(2, 0).orR  ||   reduced4CExtra   // 加法时的粘滞位计算
             )
         )
-
+    // <<< C的尾数处理
+    
     io.mulAddA := rawA.sig
     io.mulAddB := rawB.sig
     io.mulAddC := alignedSigC(sigWidth * 2, 1)
@@ -214,7 +213,8 @@ class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
         alignedSigC(sigSumWidth - 1, sigWidth * 2 + 1)  // 对齐C的高位部分
     io.toPostMul.bit0AlignedSigC := alignedSigC(0)      // 对齐C的最低位
 
-    //io.preDebug := Cat(rawA.sig, rawB.sig, rawC.sig)
+    //debug
+    io.dbg_alignedSigC := alignedSigC
 }
 
 class MulAddRecFNToRaw_postMul(expWidth: Int, sigWidth: Int) extends RawModule
@@ -226,7 +226,8 @@ class MulAddRecFNToRaw_postMul(expWidth: Int, sigWidth: Int) extends RawModule
         val invalidExc  = Output(Bool())     // 无效操作异常标志
         val rawOut = Output(new RawFloat(expWidth, sigWidth + 2))  // 原始格式的输出结果
 
-        //val postDebug = Output(UInt(20.W))
+        //debug
+        val dbg_rawSig = Output(UInt((sigWidth + 2).W))
     })
 
     val sigSumWidth = sigWidth * 3 + 3  // 信号和的总位宽
@@ -345,7 +346,8 @@ class MulAddRecFNToRaw_postMul(expWidth: Int, sigWidth: Int) extends RawModule
     
     // <<< 特殊情况处理和结果组装
 
-    //io.postDebug := CDom_sig
+    //debug
+    io.dbg_rawSig := io.rawOut.sig
 }
 
 class MulAddRecFN(expWidth: Int, sigWidth: Int) extends RawModule
@@ -356,6 +358,10 @@ class MulAddRecFN(expWidth: Int, sigWidth: Int) extends RawModule
         val b = Input(Bits((16).W))
         val c = Input(Bits((expWidth + sigWidth).W))
         val out = Output(Bits((expWidth + sigWidth).W))
+
+        //debug
+        val dbg_alignedSigC = Output(UInt((sigWidth + 20).W))
+        val dbg_rawSig = Output(UInt((sigWidth + 2).W))
     })
 
     val mulAddRecFNToRaw_preMul =
@@ -379,5 +385,9 @@ class MulAddRecFN(expWidth: Int, sigWidth: Int) extends RawModule
 
     val Bf16_out = fNFromRecFN(8, 8, roundRawFNToRecFN.io.out)
     io.out := Bf16_out
+
+    //debug
+    io.dbg_alignedSigC := mulAddRecFNToRaw_preMul.io.dbg_alignedSigC
+    io.dbg_rawSig := mulAddRecFNToRaw_postMul.io.dbg_rawSig
 }
 

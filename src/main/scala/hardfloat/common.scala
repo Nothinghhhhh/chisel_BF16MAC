@@ -82,7 +82,7 @@ class RawBF16(val expWidth: Int, val sigWidth: Int) extends Bundle
     val isInf: Bool = Bool()              // overrides 'isZero', 'sExp', and 'sig'
     val isZero: Bool = Bool()              // overrides 'sExp' and 'sig'
     val sign: Bool = Bool()
-    val sExp: UInt = UInt((expWidth + 1).W)
+    val sExp: SInt = SInt((expWidth + 1).W)
     val sig: UInt = UInt((sigWidth + 1).W)   // 2 m.s. bits cannot both be 0
 
 }
