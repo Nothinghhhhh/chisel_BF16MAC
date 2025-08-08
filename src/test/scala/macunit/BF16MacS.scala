@@ -3,13 +3,13 @@ package macunit
 import chisel3._
 import chisel3.simulator.EphemeralSimulator._
 import org.scalatest.flatspec.AnyFlatSpec
-import hardfloat.MulAddRecFN
+import hardfloat.BF16MAC
 import scala.io.Source
 import java.io.{File, PrintWriter}
 
 class BF16MacS extends AnyFlatSpec {
 
-  behavior of "MulAddRecFN"
+  behavior of "BF16MAC"
 
   // BF16格式辅助函数：将浮点数转换为BF16
   def floatToBF16(f: scala.Float): Int = {
@@ -21,7 +21,7 @@ class BF16MacS extends AnyFlatSpec {
   }
 
   it should "handle positive infinity" in {
-    simulate(new MulAddRecFN(8, 8)) { dut =>
+    simulate(new BF16MAC(8, 8)) { dut =>
       
       // 测试: ∞ * 1.0 + 0.0 = ∞
       val negInf = makeBF16(1, 255, 0)  // +∞

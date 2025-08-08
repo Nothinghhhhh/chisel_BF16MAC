@@ -21,7 +21,7 @@ object GenerateVerilog extends App {
     //Seq(ChiselGeneratorAnnotation(() => new HardfloatAdd(Float(8, 24), Float(8, 24), Float(8, 24))),
     //Seq(ChiselGeneratorAnnotation(() => new HardfloatMul(Float(8, 24), Float(8, 24), Float(8, 24))),
     //Seq(ChiselGeneratorAnnotation(() => new hardfloat.AddAfter(8, 24)),
-    Seq(ChiselGeneratorAnnotation(() => new hardfloat.MulAddRecFN(8, 8)),
+    Seq(ChiselGeneratorAnnotation(() => new hardfloat.BF16MAC(8, 8)),
     //Seq(ChiselGeneratorAnnotation(() => new hardfloat.BF16ToRawBF16(8, 8)),
     //Seq(ChiselGeneratorAnnotation(() => new hardfloat.BF16ToRawFloat),
       FirtoolOption("--disable-all-randomization"))

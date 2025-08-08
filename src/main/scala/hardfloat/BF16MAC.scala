@@ -2,9 +2,8 @@ package hardfloat
 
 import chisel3._
 import chisel3.util._
-import consts._
 
-class MulAddRecFN_interIo(expWidth: Int, sigWidth: Int) extends Bundle
+class BF16MAC_interIo(expWidth: Int, sigWidth: Int) extends Bundle
 {
 //*** 编码这些情况是否可以使用更少的位数？:
     val isSigNaNAny     = Bool()  // 任何输入是否为信号NaN（sNaN）
@@ -24,45 +23,8 @@ class MulAddRecFN_interIo(expWidth: Int, sigWidth: Int) extends Bundle
     val bit0AlignedSigC = UInt(1.W)  // 对齐后的C的最低位
 
 }
-class BF16ToRawFloat extends RawModule {
-    val io = IO(new Bundle {
-        val in = Input(Bits(16.W))
-        val isZeroFract = Input(Bool())
-        val out = Output(new RawFloat(8, 8))
-    })
 
-    val sign = io.in(15)
-    val expIn = io.in(14, 7)
-    val fractIn = io.in(6, 0)
-
-    val isZeroExpIn = (expIn === 0.U)
-    val isZeroFractIn = io.isZeroFract
-
-    val normDist = countLeadingZeros(fractIn)
-    val subnormFract = (fractIn << normDist)(5, 0) << 1
-
-    val adjustedExp = 
-        Mux(isZeroExpIn,
-            normDist ^ ((BigInt(1) << 9) - 1).U,
-            expIn
-        ) + (
-            (BigInt(1) << 7).U |
-            Mux(isZeroExpIn, 2.U, 1.U)
-        )
-
-    val isZero = isZeroExpIn && isZeroFractIn
-    val isSpecial = adjustedExp(8, 7) === 3.U
-
-    io.out.isNaN := isSpecial && !isZeroFractIn
-    io.out.isInf := isSpecial && isZeroFractIn
-    io.out.isZero := isZero         
-    io.out.sign := sign
-    io.out.sExp := adjustedExp(8, 0).zext
-
-    io.out.sig := 0.U(1.W) ## !isZero ## Mux(isZeroExpIn, subnormFract, fractIn)
-} 
-
-class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
+class BF16MACToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
 {
     val io = IO(new Bundle {
         val a = Input(Bits((16).W))
@@ -71,29 +33,23 @@ class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
         val mulAddA = Output(UInt(8.W))  // 传递给乘法器的A的尾数
         val mulAddB = Output(UInt(8.W))  // 传递给乘法器的B的尾数
         val mulAddC = Output(UInt((sigWidth * 2).W))  // 对齐后的C，用于与乘积相加
-        val toPostMul = Output(new MulAddRecFN_interIo(expWidth, sigWidth))  // 传递给后处理阶段的信息、
-    
-        //debug
-        val dbg_alignedSigC = Output(UInt((sigWidth + 20).W))
+        val toPostMul = Output(new BF16MAC_interIo(expWidth, sigWidth))  // 传递给后处理阶段的信息、
     })
 
     val sigSumWidth = sigWidth + 16 + 3  
     // 信号和的总位宽，用于容纳整个计算过程的尾数，故指数对齐时需要考虑移位至sigSumWidth对应的实际位置
 
     // >>> 格式转换
-    val rawA_module = Module(new BF16ToRawFloat())
+    val rawA_module = Module(new IEEEToRawFloat(8, 8))
     rawA_module.io.in := io.a
-    rawA_module.io.isZeroFract := io.a(6, 0) === 0.U
     val rawA = rawA_module.io.out
 
-    val rawB_module = Module(new BF16ToRawFloat())
+    val rawB_module = Module(new IEEEToRawFloat(8, 8))
     rawB_module.io.in := io.b
-    rawB_module.io.isZeroFract := io.b(6, 0) === 0.U
     val rawB = rawB_module.io.out
 
-    val rawC_module = Module(new BF16ToRawFloat())
+    val rawC_module = Module(new IEEEToRawFloat(8, 8))
     rawC_module.io.in := io.c
-    rawC_module.io.isZeroFract := io.c(6, 0) === 0.U
     val rawC = rawC_module.io.out
     // <<< 格式转换
     
@@ -175,22 +131,16 @@ class MulAddRecFNToRaw_preMul(expWidth: Int, sigWidth: Int) extends RawModule
     io.toPostMul.highAlignedSigC :=
         alignedSigC(sigSumWidth - 1, sigWidth * 2 + 1)  // 对齐C的高位部分
     io.toPostMul.bit0AlignedSigC := alignedSigC(0)      // 对齐C的最低位
-
-    //debug
-    io.dbg_alignedSigC := alignedSigC
 }
 
-class MulAddRecFNToRaw_postMul(expWidth: Int, sigWidth: Int) extends RawModule
+class BF16MACToRaw_postMul(expWidth: Int, sigWidth: Int) extends RawModule
 {
-    override def desiredName = s"MulAddRecFNToRaw_postMul_e${expWidth}_s${sigWidth}"
+    override def desiredName = s"BF16MACToRaw_postMul_e${expWidth}_s${sigWidth}"
     val io = IO(new Bundle {
-        val fromPreMul = Input(new MulAddRecFN_interIo(expWidth, sigWidth))  // 来自前处理阶段的信息
+        val fromPreMul = Input(new BF16MAC_interIo(expWidth, sigWidth))  // 来自前处理阶段的信息
         val mulAddResult = Input(UInt((sigWidth * 2 + 1).W))  // 乘法器的结果：A*B + alignedC
         val invalidExc  = Output(Bool())     // 无效操作异常标志
         val rawOut = Output(new RawFloat(expWidth, sigWidth + 2))  // 原始格式的输出结果
-
-        //debug
-        val dbg_rawSig = Output(UInt((sigWidth + 2).W))
     })
 
     val sigSumWidth = sigWidth * 3 + 3  // 信号和的总位宽
@@ -308,48 +258,37 @@ class MulAddRecFNToRaw_postMul(expWidth: Int, sigWidth: Int) extends RawModule
     io.rawOut.sig := Mux(io.fromPreMul.CIsDominant, CDom_sig, notCDom_sig)
     
     // <<< 特殊情况处理和结果组装
-
-    //debug
-    io.dbg_rawSig := io.rawOut.sig
 }
 
-class MulAddRecFN(expWidth: Int, sigWidth: Int) extends RawModule
+class BF16MAC(expWidth: Int, sigWidth: Int) extends RawModule
 {
-    override def desiredName = s"MulAddRecFN_e${expWidth}_s${sigWidth}"
+    override def desiredName = s"BF16MAC_e${expWidth}_s${sigWidth}"
     val io = IO(new Bundle {
         val a = Input(Bits((16).W))
         val b = Input(Bits((16).W))
         val c = Input(Bits((expWidth + sigWidth).W))
         val out = Output(Bits((expWidth + sigWidth).W))
-
-        //debug
-        val dbg_alignedSigC = Output(UInt((sigWidth + 20).W))
-        val dbg_rawSig = Output(UInt((sigWidth + 2).W))
     })
 
-    val mulAddRecFNToRaw_preMul =
-        Module(new MulAddRecFNToRaw_preMul(expWidth, sigWidth))  // 前处理模块
-    mulAddRecFNToRaw_preMul.io.a  := io.a
-    mulAddRecFNToRaw_preMul.io.b  := io.b
-    mulAddRecFNToRaw_preMul.io.c  := io.c
+    val BF16MACToRaw_preMul =
+        Module(new BF16MACToRaw_preMul(expWidth, sigWidth))  // 前处理模块
+    BF16MACToRaw_preMul.io.a  := io.a
+    BF16MACToRaw_preMul.io.b  := io.b
+    BF16MACToRaw_preMul.io.c  := io.c
 
     // 执行乘加运算：(A * B) + alignedC
-    val mulAddResult = (mulAddRecFNToRaw_preMul.io.mulAddA * mulAddRecFNToRaw_preMul.io.mulAddB) +& mulAddRecFNToRaw_preMul.io.mulAddC
+    val mulAddResult = (BF16MACToRaw_preMul.io.mulAddA * BF16MACToRaw_preMul.io.mulAddB) +& BF16MACToRaw_preMul.io.mulAddC
 
-    val mulAddRecFNToRaw_postMul =
-        Module(new MulAddRecFNToRaw_postMul(expWidth, sigWidth)) // 后处理模块
-    mulAddRecFNToRaw_postMul.io.fromPreMul := mulAddRecFNToRaw_preMul.io.toPostMul  // 传递前处理的结果
-    mulAddRecFNToRaw_postMul.io.mulAddResult := mulAddResult  // 传递乘加结果
+    val BF16MACToRaw_postMul =
+        Module(new BF16MACToRaw_postMul(expWidth, sigWidth)) // 后处理模块
+    BF16MACToRaw_postMul.io.fromPreMul := BF16MACToRaw_preMul.io.toPostMul  // 传递前处理的结果
+    BF16MACToRaw_postMul.io.mulAddResult := mulAddResult  // 传递乘加结果
 
     val roundRawFNToRecFN =
         Module(new RoundRawFNToRecFN(expWidth, sigWidth, 0))  // 舍入模块
-    roundRawFNToRecFN.io.invalidExc   := mulAddRecFNToRaw_postMul.io.invalidExc
-    roundRawFNToRecFN.io.in           := mulAddRecFNToRaw_postMul.io.rawOut
+    roundRawFNToRecFN.io.invalidExc   := BF16MACToRaw_postMul.io.invalidExc
+    roundRawFNToRecFN.io.in           := BF16MACToRaw_postMul.io.rawOut
 
     val Bf16_out = fNFromRecFN(8, 8, roundRawFNToRecFN.io.out)
     io.out := Bf16_out
-
-    //debug
-    io.dbg_alignedSigC := mulAddRecFNToRaw_preMul.io.dbg_alignedSigC
-    io.dbg_rawSig := mulAddRecFNToRaw_postMul.io.dbg_rawSig
 }

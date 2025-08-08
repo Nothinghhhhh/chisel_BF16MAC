@@ -3,13 +3,13 @@ package macunit
 import chisel3._
 import chisel3.simulator.EphemeralSimulator._
 import org.scalatest.flatspec.AnyFlatSpec
-import hardfloat.MulAddRecFN
+import hardfloat.BF16MAC
 import scala.io.Source
 import java.io.{File, PrintWriter}
 
 class BF16MacTester extends AnyFlatSpec {
 
-  behavior of "MulAddRecFN"
+  behavior of "BF16MAC"
 
   // BF16格式辅助函数：将浮点数转换为BF16
   def floatToBF16(f: scala.Float): Int = {
@@ -90,7 +90,7 @@ class BF16MacTester extends AnyFlatSpec {
   }
 
   // 运行单个测例
-  def runSingleTest(dut: MulAddRecFN, tv: TestVector): Int = {
+  def runSingleTest(dut: BF16MAC, tv: TestVector): Int = {
     dut.io.a.poke(tv.a.U)
     dut.io.b.poke(tv.b.U) 
     dut.io.c.poke(tv.c.U)
@@ -100,7 +100,7 @@ class BF16MacTester extends AnyFlatSpec {
   }
 /*
   it should "perform simple BF16 multiply-add: 1.0 * 2.0 + 1.0 = 3.0" in {
-    simulate(new MulAddRecFN(8, 8)) { dut =>
+    simulate(new BF16MAC(8, 8)) { dut =>
       
       // 最简单的测试: 1.0 * 2.0 + 1.0 = 3.0 (三个BF16输入)
       val a = floatToBF16(1.0f)     // BF16: 0x3F80 (1.0)
@@ -145,7 +145,7 @@ class BF16MacTester extends AnyFlatSpec {
   }
 
   it should "handle zero multiplication" in {
-    simulate(new MulAddRecFN(8, 8)) { dut =>
+    simulate(new BF16MAC(8, 8)) { dut =>
       
       // 测试: 0.0 * 1.0 + 2.0 = 2.0
       val a = makeBF16(0, 0, 1)     // 0.0
@@ -174,7 +174,7 @@ class BF16MacTester extends AnyFlatSpec {
     val testVectors = loadTestVectors("result/mismatch_cases.csv")
     
     if (testVectors.nonEmpty) {
-      simulate(new MulAddRecFN(8, 8)) { dut =>
+      simulate(new BF16MAC(8, 8)) { dut =>
         val results = scala.collection.mutable.ListBuffer[(TestVector, Int)]()
         var passCount = 0
         var failCount = 0
