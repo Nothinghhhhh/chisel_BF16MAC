@@ -137,8 +137,6 @@ class BF16MacTester extends AnyFlatSpec {
       // 期望结果：3.0 在BF16中是0x4040，转换为RecFN应该是...
       val expected3_0_bf16 = floatToBF16(3.0f)
       println(s"Expected 3.0 in BF16: 0x${expected3_0_bf16.toHexString}")
-      
-      // 验证结果不为0（基本的健全性检查）
       assert(result.litValue != 0, "Result should not be zero")
       
       // 验证符号应该为正
@@ -173,7 +171,7 @@ class BF16MacTester extends AnyFlatSpec {
   */
   // CSV批量测试
   it should "pass all mismatch_cases.csv test cases" in {
-    val testVectors = loadTestVectors("mismatch_cases.csv")
+    val testVectors = loadTestVectors("result/mismatch_cases.csv")
     
     if (testVectors.nonEmpty) {
       simulate(new MulAddRecFN(8, 8)) { dut =>
@@ -190,61 +188,23 @@ class BF16MacTester extends AnyFlatSpec {
           val passed = actualResult == tv.rm_expected
           if (passed) {
             passCount += 1
-            println(s"✅ Line ${tv.line_num}: PASS")
+            println(s"Line ${tv.line_num}: PASS")
           } else {
             failCount += 1
-            println(s"❌ Line ${tv.line_num}: FAIL - A=0x${tv.a.toHexString}, B=0x${tv.b.toHexString}, C=0x${tv.c.toHexString}")
+            println(s"Line ${tv.line_num}: FAIL - A=0x${tv.a.toHexString}, B=0x${tv.b.toHexString}, C=0x${tv.c.toHexString}")
             println(s"   Expected: 0x${tv.rm_expected.toHexString}, Got: 0x${actualResult.toHexString}")
           }
         }
         
         // 保存详细结果
-        saveResults(results.toList, "csv_test_results.csv")
+        saveResults(results.toList, "result/csv_test_results.csv")
         
         println(s"CSV Test Summary: ${passCount} passed, ${failCount} failed, ${testVectors.length} total")
         
-        // 可选：如果你希望测试在有失败时也继续运行，注释掉下面这行
         // assert(failCount == 0, s"$failCount test cases failed")
       }
     } else {
       println("No CSV test vectors found, skipping CSV tests")
     }
   }
-/*
-  // CSV单个测例调试
-  it should "debug specific CSV test cases" in {
-    val testVectors = loadTestVectors("mismatch_cases.csv")
-    
-    if (testVectors.nonEmpty) {
-      simulate(new MulAddRecFN(8, 8)) { dut =>
-        // 只运行前3个测例进行详细调试
-        testVectors.take(3).foreach { tv =>
-          println(s"\n=== 调试测例 Line ${tv.line_num} ===")
-          println(s"输入: A=0x${tv.a.toHexString}, B=0x${tv.b.toHexString}, C=0x${tv.c.toHexString}")
-          println(s"期望输出: RM=0x${tv.rm_expected.toHexString}, DUT_orig=0x${tv.dut_expected.toHexString}")
-          
-          val actualResult = runSingleTest(dut, tv)
-          println(s"实际输出: 0x${actualResult.toHexString}")
-          
-          // 分析输入值
-          def analyzeBF16(value: Int, name: String): Unit = {
-            val sign = (value >> 15) & 1
-            val exp = (value >> 7) & 0xFF
-            val frac = value & 0x7F
-            println(s"$name: 符号=${sign}, 指数=${exp}(0x${exp.toHexString}), 尾数=${frac}(0x${frac.toHexString})")
-          }
-          
-          analyzeBF16(tv.a, "A")
-          analyzeBF16(tv.b, "B") 
-          analyzeBF16(tv.c, "C")
-          analyzeBF16(actualResult, "Result")
-          
-          val match_rm = actualResult == tv.rm_expected
-          val match_orig_dut = actualResult == tv.dut_expected
-          println(s"匹配状态: RM=${if(match_rm) "✅" else "❌"}, 原DUT=${if(match_orig_dut) "✅" else "❌"}")
-        }
-      }
-    }
-  }
-  */
 }
